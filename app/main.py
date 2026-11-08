@@ -1,3 +1,4 @@
+import json
 import os
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -13,6 +14,16 @@ def create_app(db_path: str = os.environ.get("LAB_DB", "lab.sqlite3")) -> FastAP
     app = FastAPI(title="payments-webhook-lab")
     con = db.connect(db_path)
 
+    def process(provider: str, body: bytes) -> dict:
+        try:
+            event = json.loads(body)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="body is not valid JSON")
+        try:
+            return {"result": handlers.apply_event(con, provider, event)}
+        except handlers.InvalidEvent as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
     @app.post("/webhooks/stripe")
     async def stripe(request: Request, stripe_signature: str = Header(default="")):
         body = await request.body()
@@ -20,7 +31,7 @@ def create_app(db_path: str = os.environ.get("LAB_DB", "lab.sqlite3")) -> FastAP
             verify_stripe(STRIPE_SECRET, body, stripe_signature)
         except SignatureError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        return {"result": handlers.apply_event(con, "stripe", await request.json())}
+        return process("stripe", body)
 
     @app.post("/webhooks/paypal")
     async def paypal(request: Request, x_lab_signature: str = Header(default="")):
@@ -29,7 +40,7 @@ def create_app(db_path: str = os.environ.get("LAB_DB", "lab.sqlite3")) -> FastAP
             verify_paypal(PAYPAL_SECRET, body, x_lab_signature)
         except SignatureError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        return {"result": handlers.apply_event(con, "paypal", await request.json())}
+        return process("paypal", body)
 
     @app.get("/health")
     def health():

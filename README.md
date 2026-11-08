@@ -2,13 +2,15 @@
 
 A small, runnable reference for the part of e-commerce support that goes wrong most often: **payment webhooks**.
 
-Providers retry events, send them out of order, and sometimes a payment never reaches your database at all. The result is a customer who paid but has no order, or a refund that support cannot find. This lab shows a safe way to receive the events and a report that finds the mismatches.
+Providers retry events, send them out of order, and sometimes a payment never reaches your database at all. The result is a customer who paid but has no order, or a refund that support cannot find. This lab shows a safe way to receive the events and a report that finds the mismatches, including events that never found their payment.
 
 ## What it does
 
 - **Signature verification.** Stripe-style header (`t=...,v1=...`, HMAC-SHA256 with a replay window) and a simplified PayPal-style header.
 - **Idempotency.** Every event id is stored once per provider, so a retry is answered with `duplicate` and changes nothing.
-- **Payment states.** `paid`, `partially_refunded`, `refunded` and `disputed`, updated from refund and dispute events.
+- **Out-of-order events.** A refund or dispute that arrives before its payment is parked and applied when the payment shows up. A refund larger than the payment is clamped and flagged. A payment event repeated under a new id does not erase refunds already booked.
+- **Payment states.** `paid`, `partially_refunded`, `refunded` and `disputed` (a dispute is never hidden by a later refund).
+- **Safe processing.** Events are validated first and processed in one transaction, so a malformed event is a `400` and is not marked as processed.
 - **Reconciliation.** Compare the recorded payments with a provider export (CSV) and list every mismatch: missing webhook, different amount, different status, recorded but not in the export.
 
 It runs against local demo events only. No real keys, no network calls to payment providers.
@@ -30,7 +32,7 @@ python -m app.reconcile lab.sqlite3 export.csv
 python -m pytest -q
 ```
 
-Nine tests cover valid and invalid signatures, replay protection, malformed headers, duplicate events, partial then full refunds, disputes, the PayPal endpoint and the three kinds of reconciliation mismatch.
+22 tests cover signatures (including two `v1` values during secret rotation), replay protection, duplicates, partial and full refunds, disputes, out-of-order events, oversized refunds, malformed JSON and missing fields, bad amounts, the PayPal endpoint and the reconciliation report. Twelve of them were written after a review found real bugs (lost out-of-order refunds, refunds erased by a repeated payment event, 500 errors on bad input) and fail on the first version.
 
 ## Layout
 
